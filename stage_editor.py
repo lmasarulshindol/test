@@ -20,7 +20,14 @@ OBJ_TYPES = [
     ('コイン', 'coinobj'),
     ('敵', 'enemyobj'),
     ('ゴール', 'goal'),
+    ('トゲ', 'spikeobj'),
     ('スタート位置', 'player_start'),
+]
+SPIKE_DIRECTIONS = [
+    ('上', 'up'),
+    ('下', 'down'),
+    ('左', 'left'),
+    ('右', 'right'),
 ]
 
 class StageEditor:
@@ -29,7 +36,8 @@ class StageEditor:
         self.root.title('ステージエディタ')
         self.mode = tk.StringVar(value='ground')
         self.block_type = tk.StringVar(value='normal')
-        self.data = {'ground': [], 'blocks': [], 'coins': [], 'enemies': [], 'goals': [], 'player_start': None}
+        self.spike_direction = tk.StringVar(value='up')
+        self.data = {'ground': [], 'blocks': [], 'coins': [], 'enemies': [], 'goals': [], 'spikes': [], 'player_start': None}
         self.selected = None
         self.selected_type = None
         self.drag_offset = (0, 0)
@@ -46,6 +54,12 @@ class StageEditor:
         tk.Label(block_frame, text='ブロック種別:').pack(side=tk.LEFT)
         for label, btype in BLOCK_TYPES:
             b = tk.Radiobutton(block_frame, text=label, variable=self.block_type, value=btype)
+            b.pack(side=tk.LEFT)
+        spike_frame = tk.Frame(root)
+        spike_frame.pack(side=tk.TOP, fill=tk.X)
+        tk.Label(spike_frame, text='トゲ向き:').pack(side=tk.LEFT)
+        for label, d in SPIKE_DIRECTIONS:
+            b = tk.Radiobutton(spike_frame, text=label, variable=self.spike_direction, value=d)
             b.pack(side=tk.LEFT)
         tk.Button(frame, text='新規', command=self.new_stage).pack(side=tk.LEFT)
         tk.Button(frame, text='開く', command=self.open_stage).pack(side=tk.LEFT)
@@ -81,6 +95,13 @@ class StageEditor:
         for g in self.data['ground']:
             if g['x'] <= x <= g['x']+g['width'] and g['y'] <= y <= g['y']+g['height']:
                 return g, 'ground'
+        for s in self.data['spikes']:
+            if s['x'] <= x <= s['x']+20 and s['y'] <= y <= s['y']+20:
+                return s, 'spikeobj'
+        if self.data['player_start']:
+            px, py = self.data['player_start']['x'], self.data['player_start']['y']
+            if (px - GRID_SIZE//2) <= x <= (px + GRID_SIZE//2) and (py - GRID_SIZE//2) <= y <= (py + GRID_SIZE//2):
+                return self.data['player_start'], 'player_start'
         return None, None
 
     def rect_of(self, obj, objtype):
@@ -90,6 +111,8 @@ class StageEditor:
             return (obj['x'], obj['y'], obj['x']+GRID_SIZE*2, obj['y']+GRID_SIZE*2)
         elif objtype == 'coinobj':
             return (obj['x']-GRID_SIZE//2, obj['y']-GRID_SIZE//2, obj['x']+GRID_SIZE//2, obj['y']+GRID_SIZE//2)
+        elif objtype == 'spikeobj':
+            return (obj['x'], obj['y'], obj['x']+20, obj['y']+20)
         return (0,0,0,0)
 
     def is_overlap(self, rect1, rect2):
@@ -109,6 +132,8 @@ class StageEditor:
             objs.append((e, 'enemyobj'))
         for g in self.data['goals']:
             objs.append((g, 'goal'))
+        for s in self.data['spikes']:
+            objs.append((s, 'spikeobj'))
         return objs
 
     def check_overlaps(self):
@@ -131,8 +156,12 @@ class StageEditor:
         if obj:
             self.selected = obj
             self.selected_type = objtype
-            rx, ry, _, _ = self.rect_of(obj, objtype)
-            self.drag_offset = (event.x - rx, event.y - ry)
+            if objtype == 'player_start':
+                px, py = self.data['player_start']['x'], self.data['player_start']['y']
+                self.drag_offset = (event.x - px, event.y - py)
+            else:
+                rx, ry, _, _ = self.rect_of(obj, objtype)
+                self.drag_offset = (event.x - rx, event.y - ry)
             self.draw()
             return
         # 空きなら新規配置
@@ -162,9 +191,14 @@ class StageEditor:
             self.selected_type = 'goal'
             self.drag_offset = (event.x - x, event.y - y)
         elif m == 'player_start':
-            self.data['player_start'] = {'x': x, 'y': y}
+            self.data['player_start'] = {'x': x + GRID_SIZE // 2, 'y': y + GRID_SIZE // 2}
             self.selected = self.data['player_start']
             self.selected_type = 'player_start'
+            self.drag_offset = (event.x - (x + GRID_SIZE // 2), event.y - (y + GRID_SIZE // 2))
+        elif m == 'spikeobj':
+            self.data['spikes'].append({'x': x, 'y': y, 'dir': self.spike_direction.get()})
+            self.selected = self.data['spikes'][-1]
+            self.selected_type = 'spikeobj'
             self.drag_offset = (event.x - x, event.y - y)
         self.draw()
 
@@ -175,15 +209,24 @@ class StageEditor:
             if self.selected_type == 'ground':
                 self.selected['x'] = x
                 self.selected['y'] = y
-            elif self.selected_type in ['block', 'enemyobj', 'goal']:
+            elif self.selected_type == 'block':
                 self.selected['x'] = x
                 self.selected['y'] = y
             elif self.selected_type == 'coinobj':
                 self.selected['x'] = x+GRID_SIZE//2
                 self.selected['y'] = y+GRID_SIZE//2
-            elif self.selected_type == 'player_start':
+            elif self.selected_type == 'enemyobj':
                 self.selected['x'] = x
                 self.selected['y'] = y
+            elif self.selected_type == 'goal':
+                self.selected['x'] = x
+                self.selected['y'] = y
+            elif self.selected_type == 'spikeobj':
+                self.selected['x'] = x
+                self.selected['y'] = y
+            elif self.selected_type == 'player_start':
+                self.selected['x'] = x+GRID_SIZE//2
+                self.selected['y'] = y+GRID_SIZE//2
             self.draw()
 
     def on_release(self, event):
@@ -207,6 +250,8 @@ class StageEditor:
                 self.data['goals'].remove(obj)
             elif objtype == 'player_start':
                 self.data['player_start'] = None
+            elif objtype == 'spikeobj':
+                self.data['spikes'].remove(obj)
             self.draw()
 
     def draw(self):
@@ -253,9 +298,23 @@ class StageEditor:
             color = '#ff4444' if id(self.data['player_start']) in overlaps else '#0000ff'
             self.canvas.create_rectangle(self.data['player_start']['x']-GRID_SIZE//2, self.data['player_start']['y']-GRID_SIZE//2, self.data['player_start']['x']+GRID_SIZE//2, self.data['player_start']['y']+GRID_SIZE//2, fill=color)
             self.canvas.create_text(self.data['player_start']['x']+GRID_SIZE, self.data['player_start']['y']+GRID_SIZE, text='player start', font=('Arial',8))
+        # spikes
+        for s in self.data['spikes']:
+            color = '#ff4444' if id(s) in overlaps else '#8888ff'
+            x, y = s['x'], s['y']
+            d = s.get('dir', 'up')
+            if d == 'up':
+                pts = [ (x, y+20), (x+10, y), (x+20, y+20) ]
+            elif d == 'down':
+                pts = [ (x, y), (x+10, y+20), (x+20, y) ]
+            elif d == 'left':
+                pts = [ (x+20, y), (x, y+10), (x+20, y+20) ]
+            elif d == 'right':
+                pts = [ (x, y), (x+20, y+10), (x, y+20) ]
+            self.canvas.create_polygon(pts, fill=color)
 
     def new_stage(self):
-        self.data = {'ground': [], 'blocks': [], 'coins': [], 'enemies': [], 'goals': [], 'player_start': None}
+        self.data = {'ground': [], 'blocks': [], 'coins': [], 'enemies': [], 'goals': [], 'spikes': [], 'player_start': None}
         self.filename = None
         self.draw()
 
@@ -269,6 +328,8 @@ class StageEditor:
                 self.data['enemies'] = []
             if 'goals' not in self.data:
                 self.data['goals'] = []
+            if 'spikes' not in self.data:
+                self.data['spikes'] = []
             self.filename = fname
             self.draw()
 
@@ -276,6 +337,14 @@ class StageEditor:
         overlaps = self.check_overlaps()
         if overlaps:
             messagebox.showerror('エラー', 'オブジェクトが重なっています。重なりを解消してください。')
+            return
+        # プレイヤー開始位置チェック
+        if not self.data.get('player_start'):
+            messagebox.showerror('エラー', 'プレイヤー開始位置が設定されていません。')
+            return
+        # ゴールチェック
+        if not self.data.get('goals'):
+            messagebox.showerror('エラー', 'ゴールが1つもありません。')
             return
         if not self.filename:
             fname = filedialog.asksaveasfilename(defaultextension='.json', filetypes=[('JSON','*.json')], initialdir='assets/stages')

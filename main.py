@@ -12,8 +12,8 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption('Super Python Bros')
 
 # フォント
-font = pygame.font.SysFont(None, 80)
-small_font = pygame.font.SysFont(None, 40)
+font = pygame.font.SysFont("meiryo", 80)
+small_font = pygame.font.SysFont("meiryo", 40)
 
 # 色
 WHITE = (255, 255, 255)
@@ -73,12 +73,104 @@ class Enemy:
         self.width = width
         self.height = height
         self.vx = 2
+        self.vy = 0
+        self.on_ground = False
     def update(self):
+        gravity = 0.5
+        # 1. on_ground判定
+        enemy_rect = pygame.Rect(self.x, self.y + 1, self.width, self.height)
+        on_ground_now = False
+        for ground in grounds:
+            if enemy_rect.colliderect(ground):
+                on_ground_now = True
+        for block in blocks:
+            if enemy_rect.colliderect(block.rect()):
+                on_ground_now = True
+        self.on_ground = on_ground_now
+
+        # 2. 重力
+        if not self.on_ground:
+            self.vy += gravity
+        else:
+            self.vy = 0
+
+        # 3. Y方向移動・当たり判定
+        self.y += self.vy
+        enemy_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        on_ground_now = False
+        for block in blocks:
+            block_rect = block.rect()
+            if enemy_rect.colliderect(block_rect):
+                if self.vy > 0 and self.y + self.height - self.vy <= block_rect.top:
+                    self.y = block_rect.top - self.height
+                    self.vy = 0
+                    on_ground_now = True
+                    enemy_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+                elif self.vy < 0 and self.y - self.vy >= block_rect.bottom:
+                    self.y = block_rect.bottom
+                    self.vy = 0
+                    enemy_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        for ground in grounds:
+            if enemy_rect.colliderect(ground):
+                if self.vy > 0 and self.y + self.height - self.vy <= ground.top:
+                    self.y = ground.top - self.height
+                    self.vy = 0
+                    on_ground_now = True
+                    enemy_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+                elif self.vy < 0 and self.y - self.vy >= ground.bottom:
+                    self.y = ground.bottom
+                    self.vy = 0
+                    enemy_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        self.on_ground = on_ground_now
+
+        # 4. X方向移動・当たり判定
         self.x += self.vx
-        if self.x < 0 or self.x + self.width > WIDTH:
-            self.vx *= -1
+        enemy_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        for block in blocks:
+            block_rect = block.rect()
+            if enemy_rect.colliderect(block_rect):
+                if self.vx > 0:
+                    self.x = block_rect.left - self.width
+                    self.vx *= -1
+                elif self.vx < 0:
+                    self.x = block_rect.right
+                    self.vx *= -1
+                enemy_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        for ground in grounds:
+            if enemy_rect.colliderect(ground):
+                if self.vx > 0:
+                    self.x = ground.left - self.width
+                    self.vx *= -1
+                elif self.vx < 0:
+                    self.x = ground.right
+                    self.vx *= -1
+                enemy_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+
+        # 5. トゲとの当たり判定
+        for spike in spikes:
+            if enemy_rect.colliderect(spike.rect()):
+                # enemiesリストから自分を消す
+                if self in enemies:
+                    enemies.remove(self)
+                break
     def draw(self, surface):
         pygame.draw.rect(surface, (255, 0, 0), (self.x, self.y, self.width, self.height))
+    def rect(self):
+        return pygame.Rect(self.x, self.y, self.width, self.height)
+
+# Spike（トゲ）クラス追加
+class Spike:
+    def __init__(self, x, y, width=40, height=20):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    def draw(self, surface):
+        pygame.draw.polygon(surface, (200,200,200), [
+            (self.x, self.y+self.height),
+            (self.x+self.width//2, self.y),
+            (self.x+self.width, self.y+self.height)
+        ])
     def rect(self):
         return pygame.Rect(self.x, self.y, self.width, self.height)
 
@@ -104,10 +196,13 @@ class Player:
         self.img = player_img
         self.is_crouching = False
         self.powered_up = False
+        self.invincible_timer = 0
     def update(self, keys):
         speed = 5
         gravity = 0.5
         jump_power = 12
+        if self.invincible_timer > 0:
+            self.invincible_timer -= 1
         # パワーアップ切り替え（デモ用：PキーでON/OFF）
         if keys[pygame.K_p]:
             if not self.powered_up:
@@ -126,27 +221,31 @@ class Player:
             self.vx = speed
         else:
             self.vx = 0
-        # ジャンプ
-        if (keys[pygame.K_SPACE] or keys[pygame.K_w]) and self.on_ground:
-            self.vy = -jump_power
-            self.on_ground = False
-        # しゃがみ
-        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            if not self.is_crouching:
-                self.y += self.height // 2
-                self.height = self.height // 2
-                self.is_crouching = True
+        # 1. まず on_ground を判定
+        player_rect = pygame.Rect(self.x, self.y + 1, self.width, self.height)  # 1ピクセル下で判定
+        on_ground_now = False
+        for ground in grounds:
+            if player_rect.colliderect(ground):
+                on_ground_now = True
+        for block in blocks:
+            if player_rect.colliderect(block.rect()):
+                on_ground_now = True
+        self.on_ground = on_ground_now
+
+        # 2. 重力やジャンプの処理
+        if not self.on_ground:
+            self.vy += gravity
         else:
-            if self.is_crouching:
-                self.y -= self.height
-                self.height = 20 if not self.powered_up else 20
-                self.is_crouching = False
-        # 重力
-        self.vy += gravity
-        # --- Y方向の移動と当たり判定 ---
+            self.vy = 0
+            # ジャンプ入力があればここでジャンプ
+            if (keys[pygame.K_SPACE] or keys[pygame.K_w]):
+                self.vy = -jump_power
+                self.on_ground = False
+
+        # 3. Y方向の移動・当たり判定
         self.y += self.vy
-        self.on_ground = False
         player_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        on_ground_now = False
         # ブロックとのY方向当たり判定
         for block in blocks:
             block_rect = block.rect()
@@ -154,7 +253,7 @@ class Player:
                 if self.vy > 0 and self.y + self.height - self.vy <= block_rect.top:
                     self.y = block_rect.top - self.height
                     self.vy = 0
-                    self.on_ground = True
+                    on_ground_now = True
                     player_rect = pygame.Rect(self.x, self.y, self.width, self.height)
                 elif self.vy < 0 and self.y - self.vy >= block_rect.bottom:
                     self.y = block_rect.bottom
@@ -166,12 +265,13 @@ class Player:
                 if self.vy > 0 and self.y + self.height - self.vy <= ground.top:
                     self.y = ground.top - self.height
                     self.vy = 0
-                    self.on_ground = True
+                    on_ground_now = True
                     player_rect = pygame.Rect(self.x, self.y, self.width, self.height)
                 elif self.vy < 0 and self.y - self.vy >= ground.bottom:
                     self.y = ground.bottom
                     self.vy = 0
                     player_rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        self.on_ground = on_ground_now
         # --- X方向の移動と当たり判定 ---
         self.x += self.vx
         player_rect = pygame.Rect(self.x, self.y, self.width, self.height)
@@ -193,11 +293,29 @@ class Player:
         # 敵との当たり判定
         for enemy in enemies:
             if player_rect.colliderect(enemy.rect()):
-                self.respawn()
+                if self.invincible_timer == 0:
+                    self.take_damage()
+        # トゲとの当たり判定
+        for spike in spikes:
+            if player_rect.colliderect(spike.rect()):
+                if self.invincible_timer == 0:
+                    self.take_damage()
         # コイン取得
         for coin in coins:
             if not coin.collected and player_rect.colliderect(coin.rect()):
                 coin.collected = True
+        if self.y > HEIGHT:
+            global game_state, dead_menu_idx
+            game_state = STATE_DEAD
+            dead_menu_idx = 0
+    def take_damage(self):
+        if self.powered_up:
+            self.powered_up = False
+            self.width = 20
+            self.height = 20
+            self.invincible_timer = 60  # 無敵時間
+        else:
+            self.respawn()
     def respawn(self):
         self.x = WIDTH//2 - 10
         self.y = HEIGHT - 200
@@ -206,6 +324,7 @@ class Player:
         self.width = 20
         self.height = 20
         self.powered_up = False
+        self.invincible_timer = 60
     def draw(self, surface):
         if self.img:
             img = pygame.transform.scale(self.img, (self.width, self.height))
@@ -218,6 +337,9 @@ STATE_TITLE = 0
 STATE_PLAY = 1
 STATE_OPTION = 2
 STATE_CLEAR = 3
+# ポーズ状態を追加
+STATE_PAUSE = 4
+STATE_DEAD = 5
 
 game_state = STATE_TITLE
 player = Player(0, 0)
@@ -227,6 +349,15 @@ bgm_on = True
 
 enemies = []
 goals = []
+spikes = []
+
+# ポーズメニュー選択肢
+pause_menu_items = ['ゲームに戻る', '設定画面へ', 'タイトル画面へ']
+pause_menu_idx = 0
+
+# 死亡メニュー項目
+dead_menu_items = ['リトライ', 'タイトルへ']
+dead_menu_idx = 0
 
 def draw_title_screen():
     screen.fill(BLACK)
@@ -270,6 +401,9 @@ def draw_play_screen():
     # コイン
     for coin in coins:
         coin.draw(screen)
+    # トゲ
+    for spike in spikes:
+        spike.draw(screen)
     # ゴール
     for goal in goals:
         pygame.draw.rect(screen, (0,255,0), pygame.Rect(goal['x'], goal['y'], 40, 40))
@@ -277,6 +411,9 @@ def draw_play_screen():
         screen.blit(txt, (goal['x'], goal['y']-20))
     # プレイヤー
     player.draw(screen)
+    # --- デバッグ表示 ---
+    debug_text = small_font.render(f'on_ground: {player.on_ground}', True, (255,0,0))
+    screen.blit(debug_text, (10, 10))
     pygame.display.flip()
 
 def draw_clear_screen():
@@ -287,8 +424,38 @@ def draw_clear_screen():
     screen.blit(info_text, (WIDTH//2 - info_text.get_width()//2, HEIGHT//2 + 40))
     pygame.display.flip()
 
+def draw_pause_menu():
+    screen.fill((30, 30, 30))
+    title = font.render('ポーズ', True, (255,255,255))
+    screen.blit(title, (WIDTH//2 - title.get_width()//2, HEIGHT//3))
+    global pause_menu_rects
+    pause_menu_rects = []
+    for i, item in enumerate(pause_menu_items):
+        color = (255,255,0) if i == pause_menu_idx else (255,255,255)
+        txt = small_font.render(item, True, color)
+        x = WIDTH//2 - txt.get_width()//2
+        y = HEIGHT//2 + i*50
+        screen.blit(txt, (x, y))
+        pause_menu_rects.append(pygame.Rect(x, y, txt.get_width(), txt.get_height()))
+    pygame.display.flip()
+
+def draw_dead_menu():
+    screen.fill((30, 0, 0))
+    title = font.render('GAME OVER', True, (255, 0, 0))
+    screen.blit(title, (WIDTH//2 - title.get_width()//2, HEIGHT//3))
+    global dead_menu_rects
+    dead_menu_rects = []
+    for i, item in enumerate(dead_menu_items):
+        color = (255,255,0) if i == dead_menu_idx else (255,255,255)
+        txt = small_font.render(item, True, color)
+        x = WIDTH//2 - txt.get_width()//2
+        y = HEIGHT//2 + i*50
+        screen.blit(txt, (x, y))
+        dead_menu_rects.append(pygame.Rect(x, y, txt.get_width(), txt.get_height()))
+    pygame.display.flip()
+
 def main():
-    global game_state, bgm_on, selected_stage_idx, current_stage_file, stage_files, enemies, goals
+    global game_state, bgm_on, selected_stage_idx, current_stage_file, stage_files, enemies, goals, spikes, pause_menu_idx, dead_menu_idx
     clock = pygame.time.Clock()
     while True:
         if game_state == STATE_TITLE:
@@ -297,7 +464,8 @@ def main():
             keys = pygame.key.get_pressed()
             for enemy in enemies:
                 enemy.update()
-            player.update(keys)
+            dummy_keys = pygame.key.get_pressed()
+            player.update(dummy_keys)
             # ゴール判定
             player_rect = pygame.Rect(player.x, player.y, player.width, player.height)
             for goal in goals:
@@ -309,6 +477,10 @@ def main():
             draw_option_screen()
         elif game_state == STATE_CLEAR:
             draw_clear_screen()
+        elif game_state == STATE_PAUSE:
+            draw_pause_menu()
+        elif game_state == STATE_DEAD:
+            draw_dead_menu()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -325,9 +497,67 @@ def main():
                     elif event.key == pygame.K_DOWN:
                         selected_stage_idx = (selected_stage_idx + 1) % len(stage_files)
                     stage_files = get_stage_files()
+            elif game_state == STATE_PLAY:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        game_state = STATE_PAUSE
+                        pause_menu_idx = 0
+            elif game_state == STATE_PAUSE:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_UP:
+                        pause_menu_idx = (pause_menu_idx - 1) % len(pause_menu_items)
+                    elif event.key == pygame.K_DOWN:
+                        pause_menu_idx = (pause_menu_idx + 1) % len(pause_menu_items)
+                    elif event.key == pygame.K_RETURN:
+                        if pause_menu_idx == 0:
+                            game_state = STATE_PLAY
+                        elif pause_menu_idx == 1:
+                            game_state = STATE_OPTION
+                        elif pause_menu_idx == 2:
+                            game_state = STATE_TITLE
+                    elif event.key == pygame.K_ESCAPE:
+                        game_state = STATE_PLAY
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = event.pos
+                    for i, rect in enumerate(pause_menu_rects):
+                        if rect.collidepoint(mx, my):
+                            pause_menu_idx = i
+                            # クリックで即決定
+                            if pause_menu_idx == 0:
+                                game_state = STATE_PLAY
+                            elif pause_menu_idx == 1:
+                                game_state = STATE_OPTION
+                            elif pause_menu_idx == 2:
+                                game_state = STATE_TITLE
+                            break
+            elif game_state == STATE_DEAD:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_UP:
+                        dead_menu_idx = (dead_menu_idx - 1) % len(dead_menu_items)
+                    elif event.key == pygame.K_DOWN:
+                        dead_menu_idx = (dead_menu_idx + 1) % len(dead_menu_items)
+                    elif event.key == pygame.K_RETURN:
+                        if dead_menu_idx == 0:
+                            # リトライ
+                            load_stage(current_stage_file)
+                            game_state = STATE_PLAY
+                        elif dead_menu_idx == 1:
+                            game_state = STATE_TITLE
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = event.pos
+                    for i, rect in enumerate(dead_menu_rects):
+                        if rect.collidepoint(mx, my):
+                            dead_menu_idx = i
+                            if dead_menu_idx == 0:
+                                load_stage(current_stage_file)
+                                game_state = STATE_PLAY
+                            elif dead_menu_idx == 1:
+                                game_state = STATE_TITLE
+                            break
             if game_state == STATE_OPTION and event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    game_state = STATE_TITLE
+                    # ポーズから来た場合はポーズに戻る、そうでなければタイトルへ
+                    game_state = STATE_PAUSE if 'pause_menu_idx' in globals() and game_state != STATE_TITLE else STATE_TITLE
                 if event.key == pygame.K_b:
                     bgm_on = not bgm_on
                     if bgm_on:
@@ -343,7 +573,7 @@ def main():
         clock.tick(60)
 
 def load_stage(filename):
-    global grounds, blocks, coins, enemies, goals
+    global grounds, blocks, coins, enemies, goals, spikes
     with open(filename, encoding='utf-8') as f:
         data = json.load(f)
     grounds = [pygame.Rect(g['x'], g['y'], g['width'], g['height']) for g in data.get('ground',[])]
@@ -351,6 +581,7 @@ def load_stage(filename):
     coins = [Coin(c['x'], c['y']) for c in data.get('coins',[])]
     enemies = [Enemy(e['x'], e['y']) for e in data.get('enemies',[])]
     goals = data.get('goals',[])
+    spikes = [Spike(s['x'], s['y'], s.get('width',40), s.get('height',20)) for s in data.get('spikes',[])]
     # プレイヤースタート位置
     if 'player_start' in data and data['player_start']:
         player.x = data['player_start']['x']
@@ -371,6 +602,9 @@ def load_stage(filename):
                     min_dy = dy
         if min_dy is not None:
             player.y += min_dy
+        player.vy = 0
+        dummy_keys = pygame.key.get_pressed()
+        player.update(dummy_keys)
     else:
         player.x = WIDTH//2 - 10
         player.y = HEIGHT - 200
